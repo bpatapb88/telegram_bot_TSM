@@ -44,6 +44,32 @@ def foo(message):
     bot.reply_to(message, "Прощай, и ничего не общещай, и ничего не говори...")
 
 
+@bot.message_handler(commands=['show_stat'])
+def statistic(message):
+    user = message.from_user
+    mention = "[" + user.first_name + "](tg://user?id=" + str(user.id) + ")"
+    if not if_user_exist(user):
+        msg = f"Считай ты ничего не достиг {mention}. Зарегайся! а то чё ты как..."
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+        return
+    else:
+        events = show_Category(user.id,"Events")
+        media = show_Category(user.id,"Media")
+        social = show_Category(user.id,"Social")
+        msg = f"Скоро всё будет {mention}, ты только жди"
+
+    bot.send_message(message.chat.id, events, parse_mode="Markdown")
+    bot.send_message(message.chat.id, media, parse_mode="Markdown")
+    bot.send_message(message.chat.id, social, parse_mode="Markdown")
+
+
+def show_Category(user_id,category):
+    sql_command = '"SELECT values -> \'' + category + '\' as ' + category + ' FROM users_tsm WHERE telegram_id = ' + str(user_id) + ' "'
+    read = os.popen(COMMAND + sql_command).read()
+    print(read)
+    return read
+
+
 @bot.message_handler(commands=['reg_me'])
 def answer(message):
     user_reg = message.from_user
@@ -119,23 +145,20 @@ def admin_answer(message, nominated_id):
 
 
 def event_plus(message,nominated_id):
-    print("event_plus - " + str(message))
-    if message.text == "BoardGame":
+    event = message.text
+
+    if event in {"BoardGame","HikingTrip","Creative","Others"}:
+        sql_command = '"SELECT values -> \'Events\' -> \'' + event + '\' FROM users_tsm WHERE telegram_id='+str(nominated_id)+'"'
+        read = os.popen(COMMAND + sql_command).read()
+        current_value = int(read.split()[2]) + 5
+        print("current value " + str(current_value))
         print("nominated_user " + str(nominated_id))
-        sql_command = '"UPDATE users_tsm SET values = jsonb_set(values::jsonb,\'{"Events","BoardGame"}\',((values::jsonb #> \'{"Events","BoardGame"}\')::int +1)::text::jsonb, false) WHERE telegram_id=' + str(
+        sql_command = '"UPDATE users_tsm SET values = jsonb_set(values::jsonb,\'{"Events","' + event + '"}\',((values::jsonb #> \'{"Events","' + event + '"}\')::int +1)::text::jsonb, false) WHERE telegram_id=' + str(
             nominated_id) + '" '
         read = os.popen(COMMAND + sql_command).read()
         if(read.split()[0] == "UPDATE" and read.split()[1] == '1'):
-            bot.send_message(message.chat.id, "BoardGame successfully incremented! ")
-
+            bot.send_message(message.chat.id, event + " successfully incremented! ")
         print("event_plus " + str(read))
-
-    elif message.text == "HikingTrip":
-        pass
-    elif message.text == "Creative":
-        pass
-    elif message.text == "Others":
-        pass
     else:
         bot.send_message(message.chat.id, "Выбери из предложанных мероприятий")
 
