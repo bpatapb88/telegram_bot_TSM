@@ -2,7 +2,6 @@
 import os
 
 import telebot
-
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup
 
 import config
@@ -10,7 +9,6 @@ import config
 bot = telebot.TeleBot(config.token)
 COMMAND = 'psql -U postgres -d postgres -c '
 chat_id = 0
-
 
 
 @bot.message_handler(content_types=["new_chat_members"])
@@ -53,18 +51,18 @@ def statistic(message):
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
         return
     else:
-        events = show_Category(user.id,"Events")
-        media = show_Category(user.id,"Media")
-        social = show_Category(user.id,"Social")
-        msg = f"Скоро всё будет {mention}, ты только жди"
+        events = show_Category(user.id, "Events")
+        media = show_Category(user.id, "Media")
+        social = show_Category(user.id, "Social")
 
     bot.send_message(message.chat.id, events, parse_mode="Markdown")
     bot.send_message(message.chat.id, media, parse_mode="Markdown")
     bot.send_message(message.chat.id, social, parse_mode="Markdown")
 
 
-def show_Category(user_id,category):
-    sql_command = '"SELECT values -> \'' + category + '\' as ' + category + ' FROM users_tsm WHERE telegram_id = ' + str(user_id) + ' "'
+def show_Category(user_id, category):
+    sql_command = '"SELECT values -> \'' + category + '\' as ' + category + ' FROM users_tsm WHERE telegram_id = ' + str(
+        user_id) + ' "'
     read = os.popen(COMMAND + sql_command).read()
     print(read)
     return read
@@ -99,41 +97,66 @@ def answer(message):
 
 @bot.message_handler(content_types=["text"])
 def handle_regular_messages(message):
-    print(str(message))
-
-    admins = bot.get_chat_administrators(config.CHAT_ID)
-    is_admin = False
-    for admin in admins:
-        print("admin - " + str(admin))
-        if(admin.user.id == message.from_user.id):
-            is_admin = True
-
-    if not is_admin:
-        return
-
+    user_is_registered = if_user_exist(message.from_user)
     user_from = message.from_user.id
-    if(message.chat.id == user_from and message.forward_from != None):
+    if (message.chat.id == user_from and message.forward_from != None):
         nominated_id = message.forward_from.id
+
+        admins = bot.get_chat_administrators(config.CHAT_ID)
+        is_admin = False
+        for admin in admins:
+            print("admin - " + str(admin))
+            if (admin.user.id == message.from_user.id):
+                is_admin = True
+
+        if not is_admin:
+            return
+
         if not if_user_exist(message.forward_from):
             bot.send_message(user_from, "Пользователь не зарегестрирован")
             return
 
         mention = "[" + message.forward_from.first_name + "](tg://user?id=" + str(message.forward_from.id) + ")"
         rmk = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        rmk.add(KeyboardButton("Events"),KeyboardButton("Social"), KeyboardButton("Media"), KeyboardButton("Hidden"))
+        rmk.add(KeyboardButton("Events"), KeyboardButton("Social"), KeyboardButton("Media"), KeyboardButton("Hidden"))
         bot_msg = f"Что заслужил/а {mention} ?"
         msg = bot.send_message(user_from, bot_msg, parse_mode="Markdown", reply_markup=rmk)
-        bot.register_next_step_handler(msg,lambda m: admin_answer(m, nominated_id))
+        bot.register_next_step_handler(msg, lambda m: admin_answer(m, nominated_id, message.forward_from.first_name))
+    elif message.chat.id == config.CHAT_ID and user_is_registered:
+        # increment messages
+        sql_command = '"SELECT values -> \'Social\' -> \'Chat\' FROM users_tsm WHERE telegram_id=' + str(
+            message.from_user.id) + '"'
+        read = os.popen(COMMAND + sql_command).read()
+        current_value = int(read.split()[2])
+        current_value += 1
+        sql_command = '"UPDATE users_tsm SET values = jsonb_set(values::jsonb,\'{"Social","Chat"}\',' + str(
+            current_value) + '::text::jsonb, false) WHERE telegram_id=' + str(message.from_user.id) + '" '
+        read = os.popen(COMMAND + sql_command).read()
+        print(str(read))
+        achv = ""
+        if current_value == 500:
+            achv = "What does the fox say?"
+        elif current_value == 1000:
+            achv = "Small talk"
+        elif current_value == 2500:
+            achv = "Jibber Jabber"
+        elif current_value == 5000:
+            achv = "Oh, shut up"
+
+        if achv != "":
+            mention = "[" + message.from_user.first_name + "](tg://user?id=" + str(message.from_user.id) + ")"
+            msg = f"Поздравляем! {mention} получил(a) ачивку - \"" + achv + "\""
+            bot.send_message(config.CHAT_ID, msg, parse_mode="Markdown")
 
 
-def admin_answer(message, nominated_id):
+def admin_answer(message, nominated_id, first_name):
     print("admin_answer - " + str(nominated_id))
     if message.text == "Events":
         rmk = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         rmk.add(KeyboardButton("BoardGame"), KeyboardButton("HikingTrip"), KeyboardButton("Creative"),
                 KeyboardButton("Others"))
         msg = bot.send_message(message.chat.id, "Теперь выбери тип мероприятия", reply_markup=rmk)
-        bot.register_next_step_handler(msg,lambda m: event_plus(m, nominated_id))
+        bot.register_next_step_handler(msg, lambda m: event_plus(m, nominated_id, first_name))
     elif message.text == "Social":
         pass
     elif message.text == "Media":
@@ -144,21 +167,64 @@ def admin_answer(message, nominated_id):
         bot.send_message(message.chat.id, "Выбери из предложанных категорий")
 
 
-def event_plus(message,nominated_id):
+def event_plus(message, nominated_id, first_name):
     event = message.text
-
-    if event in {"BoardGame","HikingTrip","Creative","Others"}:
-        sql_command = '"SELECT values -> \'Events\' -> \'' + event + '\' FROM users_tsm WHERE telegram_id='+str(nominated_id)+'"'
+    mention = "[" + str(first_name) + "](tg://user?id=" + str(nominated_id) + ")"
+    if event in {"BoardGame", "HikingTrip", "Creative", "Others"}:
+        sql_command = '"SELECT values -> \'Events\' -> \'' + event + '\' FROM users_tsm WHERE telegram_id=' + str(
+            nominated_id) + '"'
         read = os.popen(COMMAND + sql_command).read()
-        current_value = int(read.split()[2]) + 5
-        print("current value " + str(current_value))
-        print("nominated_user " + str(nominated_id))
-        sql_command = '"UPDATE users_tsm SET values = jsonb_set(values::jsonb,\'{"Events","' + event + '"}\',((values::jsonb #> \'{"Events","' + event + '"}\')::int +1)::text::jsonb, false) WHERE telegram_id=' + str(
+        current_value = int(read.split()[2]) + 1
+        sql_command = '"UPDATE users_tsm SET values = jsonb_set(values::jsonb,\'{"Events","' + event + '"}\',' + str(
+            current_value) + '::text::jsonb, false) WHERE telegram_id=' + str(
             nominated_id) + '" '
         read = os.popen(COMMAND + sql_command).read()
-        if(read.split()[0] == "UPDATE" and read.split()[1] == '1'):
+        if (read.split()[0] == "UPDATE" and read.split()[1] == '1'):
             bot.send_message(message.chat.id, event + " successfully incremented! ")
-        print("event_plus " + str(read))
+
+        if current_value == 1:
+            if event == "BoardGame":
+                achiv = "I have some game"
+            elif event == "HikingTrip":
+                achiv = "I hope we don\'t get lost"
+            elif event == "Creative":
+                achiv = "Amateur"
+            else:
+                achiv = "Jack of all trades"
+        elif current_value == 5:
+            if event == "BoardGame":
+                achiv = "Board game geek"
+            elif event == "HikingTrip":
+                achiv = "Basic Pathfinding"
+            elif event == "Creative":
+                achiv = "Edward Scissors Hands"
+            else:
+                achiv = "Outgoing"
+        elif current_value == 10:
+            if event == "BoardGame":
+                achiv = "You do not dig straight down"
+            elif event == "HikingTrip":
+                achiv = "Elven Ranger"
+            elif event == "Creative":
+                achiv = "Creative class"
+            else:
+                achiv = "The home is where the heart is"
+        elif current_value == 20:
+            if event == "BoardGame":
+                achiv = "Dungeon master"
+            elif event == "HikingTrip":
+                achiv = "One with Nature"
+            elif event == "Creative":
+                achiv = "Pen, Brush & Voice"
+            else:
+                achiv = ""
+        else:
+            achiv = ""
+
+        if achiv != "":
+            msg = f"Поздравляем! {mention} получил(a) ачивку - \"" + achiv + "\""
+            bot.send_message(config.CHAT_ID, msg, parse_mode="Markdown")
+
     else:
         bot.send_message(message.chat.id, "Выбери из предложанных мероприятий")
 
@@ -166,7 +232,6 @@ def event_plus(message,nominated_id):
 def if_user_exist(user):
     sql_command = '"SELECT "telegram_id" FROM users_tsm"'
     read = os.popen(COMMAND + sql_command).read()
-    print("if_user_exist - \n" + read)
     if str(user.id) in read:
         return True
     else:
