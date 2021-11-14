@@ -54,18 +54,18 @@ def statistic(message):
         events = show_Category(user.id, "Events")
         media = show_Category(user.id, "Media")
         social = show_Category(user.id, "Social")
-
-    bot.send_message(message.chat.id, events, parse_mode="Markdown")
-    bot.send_message(message.chat.id, media, parse_mode="Markdown")
-    bot.send_message(message.chat.id, social, parse_mode="Markdown")
+        achivki = show_Category(user.id, "Achievements")
+    msg = f"Статистика {mention}: \n" + str(events) + str(media) + str(social) + str(achivki)
+    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
 
 def show_Category(user_id, category):
-    sql_command = '"SELECT values -> \'' + category + '\' as ' + category + ' FROM users_tsm WHERE telegram_id = ' + str(
+    sql_command = '"SELECT values -> \'' + category + '\' as \\"' + category + '\\" FROM users_tsm WHERE telegram_id = ' + str(
         user_id) + ' "'
     read = os.popen(COMMAND + sql_command).read()
+
     print(read)
-    return read
+    return read.strip().replace("(1 row)","\n")
 
 
 @bot.message_handler(commands=['reg_me'])
@@ -86,7 +86,7 @@ def answer(message):
     if (read.split()[0] == "INSERT"):
         sql_command = '"UPDATE users_tsm SET values = json_build_object (\'Events\',json_build_object(\'BoardGame\',0,' \
                       '\'HikingTrip\',0,\'Creative\',0,\'Others\',0),\'Social\',json_build_object(\'Attend\',0,\'Chat\',0' \
-                      ',\'Others\',0),\'Media\',json_build_object(\'Meme\',0,\'Content\',0),\'Hidden\',json_build_object(\'exit\',0,\'horny\',0)) WHERE telegram_id=' + str(
+                      ',\'InvitedFriends\',0),\'Media\',json_build_object(\'Meme\',0,\'Content\',0),\'Hidden\',json_build_object(\'exit\',0,\'horny\',0),\'Achievements\',json_build_array()) WHERE telegram_id=' + str(
             user_reg.id) + '" '
         read = os.popen(COMMAND + sql_command).read()
         print(read)
@@ -133,6 +133,7 @@ def handle_regular_messages(message):
             current_value) + '::text::jsonb, false) WHERE telegram_id=' + str(message.from_user.id) + '" '
         read = os.popen(COMMAND + sql_command).read()
         print(str(read))
+
         achv = ""
         if current_value == 500:
             achv = "What does the fox say?"
@@ -147,18 +148,20 @@ def handle_regular_messages(message):
             mention = "[" + message.from_user.first_name + "](tg://user?id=" + str(message.from_user.id) + ")"
             msg = f"Поздравляем! {mention} получил(a) ачивку - \"" + achv + "\""
             bot.send_message(config.CHAT_ID, msg, parse_mode="Markdown")
+            add_achivment(achv,message.from_user.id)
 
 
 def admin_answer(message, nominated_id, first_name):
     print("admin_answer - " + str(nominated_id))
+    rmk = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     if message.text == "Events":
-        rmk = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        rmk.add(KeyboardButton("BoardGame"), KeyboardButton("HikingTrip"), KeyboardButton("Creative"),
-                KeyboardButton("Others"))
+        rmk.add(KeyboardButton("BoardGame"), KeyboardButton("HikingTrip"), KeyboardButton("Creative"), KeyboardButton("Others"))
         msg = bot.send_message(message.chat.id, "Теперь выбери тип мероприятия", reply_markup=rmk)
         bot.register_next_step_handler(msg, lambda m: event_plus(m, nominated_id, first_name))
     elif message.text == "Social":
-        pass
+        rmk.add(KeyboardButton("Attended"), KeyboardButton("InvitedFriends"))
+        msg = bot.send_message(message.chat.id, "Теперь выбери тип социализации", reply_markup=rmk)
+        bot.register_next_step_handler(msg, lambda m: social_plus(m, nominated_id, first_name))
     elif message.text == "Media":
         pass
     elif message.text == "Hidden":
@@ -166,6 +169,53 @@ def admin_answer(message, nominated_id, first_name):
     else:
         bot.send_message(message.chat.id, "Выбери из предложанных категорий")
 
+
+def add_achivment(achiev, telegram_id):
+    sql_command = '"UPDATE public.users_tsm SET values=jsonb_insert(values::jsonb, \'{Achievements, 1}\', \'\\"' + str(achiev) + '\\"\') ' \
+                    'WHERE telegram_id=' + str(telegram_id) + ' and ' \
+                    'NOT values::jsonb -> \'Achievements\' ? \'' + str(achiev) + '\'"'
+    read = os.popen(COMMAND + sql_command).read()
+    print("achivment was added \n" + str(read))
+
+
+
+
+def social_plus(message, nominated_id, first_name):
+    social_text = message.text
+    mention = "[" + str(first_name) + "](tg://user?id=" + str(nominated_id) + ")"
+    if social_text in {"Attended", "InvitedFriends"}:
+        sql_command = '"SELECT values -> \'Social\' -> \'' + social_text + '\' FROM users_tsm WHERE telegram_id=' + str(
+            nominated_id) + '"'
+        read = os.popen(COMMAND + sql_command).read()
+        print(read)
+        current_value = int(read.split()[2]) + 1
+        sql_command = '"UPDATE users_tsm SET values = jsonb_set(values::jsonb,\'{"Social","' + social_text + '"}\',' + str(
+            current_value) + '::text::jsonb, false) WHERE telegram_id=' + str(
+            nominated_id) + '" '
+        read = os.popen(COMMAND + sql_command).read()
+        if (read.split()[0] == "UPDATE" and read.split()[1] == '1'):
+            bot.send_message(message.chat.id, social_text + " successfully incremented! ")
+        achive = ""
+        if social_text == "Attended":
+            if current_value == 5:
+                achive = "You look familiar"
+            elif current_value == 10:
+                achive = "One of us"
+            elif current_value == 25:
+                achive = "Seasoned veteran"
+            elif current_value == 50:
+                achive = "I've seen things you people wouldn't believe"
+        else:
+            if current_value == 1:
+                achive = "We need each otter"
+
+        if achive != "":
+            msg = f"Поздравляем! {mention} получил(a) ачивку - \"" + achive + "\""
+            bot.send_message(config.CHAT_ID, msg, parse_mode="Markdown")
+            add_achivment(achive,nominated_id)
+
+    else:
+        bot.send_message(message.chat.id, "Выбери из предложанных социализаций")
 
 def event_plus(message, nominated_id, first_name):
     event = message.text
@@ -224,6 +274,7 @@ def event_plus(message, nominated_id, first_name):
         if achiv != "":
             msg = f"Поздравляем! {mention} получил(a) ачивку - \"" + achiv + "\""
             bot.send_message(config.CHAT_ID, msg, parse_mode="Markdown")
+            add_achivment(achiv, nominated_id)
 
     else:
         bot.send_message(message.chat.id, "Выбери из предложанных мероприятий")
