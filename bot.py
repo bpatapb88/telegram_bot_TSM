@@ -1,5 +1,11 @@
 # !/usr/bin/python3
+import datetime
 import os
+import threading
+import time
+
+import requests
+from bs4 import BeautifulSoup
 
 import telebot
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup
@@ -8,9 +14,59 @@ import config
 import achivments_handler
 
 bot = telebot.TeleBot(config.token)
-COMMAND = 'psql -U postgres -d postgres -c '
+COMMAND = 'psql -d raspdb -c '
 chat_id = 0
 OK = 1
+
+# pars Bash.im
+URL = "http://bomz.org/bash/?bash=random"
+URL2 = "https://randstuff.ru/fact/"
+HEADERS = {
+    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36',
+    'accept': '*/*'}
+
+
+def get_html(url, params=None):
+    r = requests.get(url, headers=HEADERS, params=params)
+    return r
+
+
+def get_content(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    items = soup.find_all('td',
+                          style='border-right: 1px dashed #D8D8D8;border-bottom: 1px dashed #F0F0F0;border-top: 1px dashed #F0F0F0;')
+    return items[1].get_text("\n", strip=True)
+
+
+def parse():
+    html = get_html(URL)
+    if html.status_code == 200:
+        return get_content(html.text)
+    else:
+        return "Error with parser"
+
+
+def get_content_fact(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    items = soup.find_all('table')
+    return items[0].get_text("\n", strip=True)
+
+
+def parseFact():
+    html = get_html(URL2)
+    if html.status_code == 200:
+        return get_content_fact(html.text)
+    else:
+        return "Error with parser facts"
+
+
+def send_message_periodically(message):
+    while True:
+        bot.send_message(config.CHAT_ID, parseFact())
+        time.sleep(43200)
+        bot.send_message(config.CHAT_ID, parse())
+        print("Periodically message was sent at ", datetime.datetime.now())
+        time.sleep(43200)
 
 
 @bot.message_handler(content_types=["new_chat_members"])
@@ -37,7 +93,8 @@ def foo(message):
             current_value = int(read.split()[2]) + 1
 
             sql_command = '"UPDATE users_tsm SET values = jsonb_set(values::jsonb,\'{"Social","InvitedFriends"}\',' \
-                + str(current_value) + '::text::jsonb, false) WHERE telegram_id=' + str(message.from_user.id) + '" '
+                          + str(current_value) + '::text::jsonb, false) WHERE telegram_id=' + str(
+                message.from_user.id) + '" '
             read = os.popen(COMMAND + sql_command).read()
             print("InvitedFriends incremented " + str(read))
 
@@ -47,8 +104,11 @@ def login_user(call: CallbackQuery):
     data_id = int(call.data.split("_")[0])
     if data_id == call.from_user.id:
         bot.restrict_chat_member(chat_id, data_id, 0, True, True, True, True, True, True, True, True)
+        if not if_user_exist(call.from_user):
+            registration(call.from_user)
         bot.delete_message(chat_id, call.message.id)
     else:
+        print("call.from - " + str(call.from_user.id) + "\n data_id-" + str(data_id))
         bot.answer_callback_query(call.id, "Ты уже зареган", show_alert=True)
 
 
@@ -83,7 +143,8 @@ def statistic(message):
 
 def show_category(user_id, category):
     sql_command = '"SELECT values -> \'' + category + '\' as \\"' + category + '\\" FROM users_tsm ' \
-        'WHERE telegram_id = ' + str(user_id) + ' "'
+                                                                               'WHERE telegram_id = ' + str(
+        user_id) + ' "'
     read = os.popen(COMMAND + sql_command).read()
     print(read)
     return read.strip().replace("(1 row)", "\n")
@@ -98,28 +159,35 @@ def answer(message):
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
         return
     else:
-        msg = f"Спасибо {mention} за регистрацию"
-        sql_command = '"INSERT INTO users_tsm (telegram_id,user_name, karma) VALUES (' + str(
-            user_reg.id) + ',\'' + str(user_reg.first_name) + '\', 0)"'
+        registration(user_reg)
+
+
+def registration(user_reg):
+    mention = "[" + user_reg.first_name + "](tg://user?id=" + str(user_reg.id) + ")"
+    msg = f"Добро пожаловать, {mention}, в наш дружный и теплый чат\nВам тут очень рады. Мы организовываем разные активиты в Брне и не только.\n@transsiberianway - Инфоканал где все ближайшие мероприятия \nhttps://instagram.com/transsiberianway?utm_medium=copy_link - Инста \nПредставьтесь, пожалуйста и расскажите о себе! Нам интересно, вам полезно. А кто не представился - тот бот! \n"
+    sql_command = '"INSERT INTO users_tsm (telegram_id,user_name, karma) VALUES (' + str(
+        user_reg.id) + ',\'' + str(user_reg.first_name) + '\', 0)"'
+    read = os.popen(COMMAND + sql_command).read()
+    print("registration - " + str(read))
+    if read.split()[2] == str(OK):
+        sql_command = '"UPDATE users_tsm SET values = json_build_object (\'Events\',json_build_object(' \
+                      '\'BoardGame\',0,\'HikingTrip\',0,\'Creative\',0,\'Others\',0),\'Social\',' \
+                      'json_build_object(\'Attended\',0,\'Chat\',0,\'InvitedFriends\',0),\'Media\',' \
+                      'json_build_object(\'Meme\',0,\'Content\',0),\'Hidden\',' \
+                      'json_build_object(\'exit\',0,\'horny\',0),\'Achievements\',json_build_array()) ' \
+                      'WHERE telegram_id=' + str(user_reg.id) + '" '
         read = os.popen(COMMAND + sql_command).read()
-        print("registration - " + str(read))
-        if read.split()[2] == str(OK):
-            sql_command = '"UPDATE users_tsm SET values = json_build_object (\'Events\',json_build_object(' \
-                          '\'BoardGame\',0,\'HikingTrip\',0,\'Creative\',0,\'Others\',0),\'Social\',' \
-                          'json_build_object(\'Attended\',0,\'Chat\',0,\'InvitedFriends\',0),\'Media\',' \
-                          'json_build_object(\'Meme\',0,\'Content\',0),\'Hidden\',' \
-                          'json_build_object(\'exit\',0,\'horny\',0),\'Achievements\',json_build_array()) ' \
-                          'WHERE telegram_id=' + str(user_reg.id) + '" '
+        print(read)
+        if user_reg.username is not None:
+            sql_command = '"UPDATE users_tsm SET nick_name = \'' + str(
+                user_reg.username) + '\' WHERE telegram_id=' + str(user_reg.id) + '"'
             read = os.popen(COMMAND + sql_command).read()
-            print(read)
-            if message.from_user.username is not None:
-                sql_command = '"UPDATE users_tsm SET nick_name = \'' + str(
-                    message.from_user.username) + '\' WHERE telegram_id=' + str(user_reg.id) + '"'
-                read = os.popen(COMMAND + sql_command).read()
-                print("nick name set " + str(read))
-            bot.send_message(message.chat.id, msg, parse_mode="Markdown")
-        else:
-            bot.send_message(message.chat.id, "Ошибка! обратитесь к разработчику")
+        print("nick name set " + str(read))
+        bot.send_message(config.CHAT_ID, msg, parse_mode="Markdown")
+    else:
+        bot.send_message(config.CHAT_ID, "Ошибка! обратитесь к разработчику")
+        bot.send_message(config.CREATOR, str(user_reg))
+        bot.send_message(config.CREATOR, str(read))
 
 
 @bot.message_handler(content_types=["text"])
@@ -239,4 +307,8 @@ def if_user_exist(user):
 
 
 if __name__ == '__main__':
+    x = threading.Thread(target=send_message_periodically,
+                         args=('',),
+                         daemon=True)
+    x.start()
     bot.infinity_polling()
