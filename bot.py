@@ -1,72 +1,17 @@
 # !/usr/bin/python3
-import datetime
 import os
-import threading
-import time
-
-import requests
-from bs4 import BeautifulSoup
 
 import telebot
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup
 
 import config
 import achivments_handler
+import periodically_sender
 
 bot = telebot.TeleBot(config.token)
 COMMAND = 'psql -d raspdb -c '
 chat_id = 0
 OK = 1
-
-# pars Bash.im
-URL = "http://bomz.org/bash/?bash=random"
-URL2 = "https://randstuff.ru/fact/"
-HEADERS = {
-    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36',
-    'accept': '*/*'}
-
-
-def get_html(url, params=None):
-    r = requests.get(url, headers=HEADERS, params=params)
-    return r
-
-
-def get_content(html):
-    soup = BeautifulSoup(html, 'html.parser')
-    items = soup.find_all('td',
-                          style='border-right: 1px dashed #D8D8D8;border-bottom: 1px dashed #F0F0F0;border-top: 1px dashed #F0F0F0;')
-    return items[1].get_text("\n", strip=True)
-
-
-def parse():
-    html = get_html(URL)
-    if html.status_code == 200:
-        return get_content(html.text)
-    else:
-        return "Error with parser"
-
-
-def get_content_fact(html):
-    soup = BeautifulSoup(html, 'html.parser')
-    items = soup.find_all('table')
-    return items[0].get_text("\n", strip=True)
-
-
-def parseFact():
-    html = get_html(URL2)
-    if html.status_code == 200:
-        return get_content_fact(html.text)
-    else:
-        return "Error with parser facts"
-
-
-def send_message_periodically(message):
-    while True:
-        bot.send_message(config.CHAT_ID, parseFact())
-        time.sleep(43200)
-        bot.send_message(config.CHAT_ID, parse())
-        print("Periodically message was sent at ", datetime.datetime.now())
-        time.sleep(43200)
 
 
 @bot.message_handler(content_types=["new_chat_members"])
@@ -157,7 +102,6 @@ def answer(message):
     if if_user_exist(user_reg):
         msg = f"Юзер {mention} уже зарегистрирован!"
         bot.send_message(message.chat.id, msg, parse_mode="Markdown")
-        return
     else:
         registration(user_reg)
 
@@ -249,8 +193,10 @@ def handle_regular_messages(message):
                 sql_command = '"UPDATE users_tsm SET karma = karma + 1 WHERE telegram_id = ' + str(nominated.id) + '"'
                 read = os.popen(COMMAND + sql_command).read()
                 print("karma incremented \n" + str(read))
-                bot.send_message(message.chat.id, f"Карму {mention} повысили до " + str(current_karma + 1),
-                                 parse_mode="Markdown")
+                if (current_karma + 1)%5 == 0:
+                    bot.send_message(message.chat.id, f"Карму {mention} повысили до " + str(current_karma + 1),
+                                     parse_mode="Markdown")
+
         elif "осуждаю" in lower_text and if_user_exist(nominated):
             if message.from_user.id == nominated.id:
                 bot.send_message(message.chat.id,
@@ -307,8 +253,5 @@ def if_user_exist(user):
 
 
 if __name__ == '__main__':
-    x = threading.Thread(target=send_message_periodically,
-                         args=('',),
-                         daemon=True)
-    x.start()
+    periodically_sender.start_thread(bot)
     bot.infinity_polling()
